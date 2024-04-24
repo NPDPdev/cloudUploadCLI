@@ -37,7 +37,7 @@ awsSetup() {
 
 
     #Authentication procedure
-    local awsAuthType=
+    local awsAuthType
     read -p 'Would you like to authenticate with [SSO] or Access Key [AK]: ' awsAuthType
   
     case $awsAuthType in
