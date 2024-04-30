@@ -32,6 +32,7 @@
 
 #Setup Azure Authentication // Need to modify apropriate configs
 azSetup() { 
+    local blobDefault
 
     #Install Azure cli if not currently installed
     if ! [ -x "$(command -v az)" ]; then
@@ -57,10 +58,21 @@ azSetup() {
       exit 1
     fi
     
+    
+    #Sets ConnectionType to Azure
+    sudo sed -i "s/ConnectionType=.*/ConnectionType=Azure/g" /usr/local/putcloud/putcloud.conf
 
 
-    #section to specify default azure blob
+
+
+    #Specify default Azure blob
     echo "azure blob selection NYI"
+    read -p 'Specify the blob that you will be uploading to: ' blobDefault
+    bbSelect $blobDefault > /dev/null
+
+    echo "Default blob is now:" $blobDefault
+    echo
+    echo "Setup complete!"
 
 }
 
@@ -68,7 +80,7 @@ azSetup() {
 
 
 
-#Setup AWS Authentication // Need to modify apropriate configs
+#Setup AWS Authentication
 
 awsSetup() { 
     #Checks if aws cli is NOT installed
@@ -123,6 +135,11 @@ awsSetup() {
       exit 1
     fi
     
+    #Sets ConnectionType to AWS
+    sudo sed -i "s/ConnectionType=.*/ConnectionType=AWS/g" /usr/local/putcloud/putcloud.conf
+
+
+    #Specify default AWS bucket
     read -p 'Specify the bucket that you will be uploading to: ' bucketDefault
     bbSelect $bucketDefault > /dev/null
 
@@ -135,23 +152,39 @@ awsSetup() {
 
 
 
-#Change blob/bucket in config
+#Allows user to configure a bucket or blob to upload to
 bbSelect(){
   local bbNew
   local tempSed
+  local serviceType
   
   #Load Config
   . /usr/local/putcloud/putcloud.conf
+
+  #Check if we should call it a Bucket or Blob
+  case "$ConnectionType" in
+    AWS)
+      serviceType="bucket";;
+
+    Azure)
+      serviceType="blob";;
+
+    *)
+      echo "Your connection type is unset or misconfigured."
+      echo "Please run putcloud with the -s flag to access setup."
+      exit 1;;
+  esac
   
+
   if [[ $# = 0 ]]; then
-    echo "Current value is: $StorageContainer"
+    echo "Current "$serviceType" is: $StorageContainer"
     read -p 'Enter new location: ' bbNew
   else
     bbNew="$1"
     
   fi
 
-  echo 'Updated value from "'$StorageContainer'" to "'$bbNew'".'  #Also make it differentiate between "bucket" and "blob" instead of just "value"
+  echo 'Updated '$serviceType' from "'$StorageContainer'" to "'$bbNew'".' 
   tempSed="s/StorageContainer=.*/StorageContainer=$bbNew/g" #part of the "this" in question
 
   sudo sed -i $tempSed /usr/local/putcloud/putcloud.conf #oh this DEFINITELY needs sanitized
@@ -161,13 +194,25 @@ bbSelect(){
 
 #Uploads files to preconfigured blob/bucket
 fileSend(){
+  local safeDest=$2
+  
+  #removes leading and trailing "/" characters to ensure correct upload path
+  if [[ $safeDest == /* ]]; then
+    safeDest=${safeDest:1}
+  fi
+  
+  if [[ $safeDest == */ ]]; then
+    safeDest=${safeDest::-1}
+  fi
+
 
   #Load Config
   . /usr/local/putcloud/putcloud.conf
 
+
   case "$ConnectionType" in
     AWS)
-      aws s3 cp ./$1 s3://$StorageContainer/$2/
+      aws s3 cp $1 s3://$StorageContainer/$safeDest/
 
       if [[ $? -eq 0 ]]; then
         echo "Upload successful."
@@ -182,7 +227,7 @@ fileSend(){
     *)
       echo "Your connection type is unset or misconfigured."
       echo "Please run putcloud with the -s flag to access setup."
-      ;;
+      exit 1;;
   esac
   
 
@@ -241,14 +286,39 @@ while true; do
         #Shifts between arguments and assigns variables to give to fileSend() function
         #Doing this for now because there is potential to include multiple files
         if [ $# -gt 2 ]; then
-
           shift
-          fileToSend="$1"
-          shift
-          sendDestination="$1"
+          fixedArgs=$#
+          
+          
 
-          #Sends file to cloud
-          fileSend $fileToSend $sendDestination
+          #Make an array for all arguments beteween -p and -d, which are files to upload
+          #Sets destination path once -d argument is reached
+          for ((i = 0 ; i < fixedArgs ; i++ )); do
+            
+            case $1 in
+              -d)
+                sendDestination="$2"
+                ;;
+              *)
+              multiFileArray[i]=$1
+              shift;;
+
+            esac
+            
+          done
+
+          if [ -z "$sendDestination" ]; then
+            echo "Missing -d flag for upload destination."
+            echo 'Run "putcloud -h" for help.'
+            exit 2
+          fi
+
+          
+
+          #Loops through array, sending each file individually
+          for fileToSend in ${multiFileArray[@]}; do
+            fileSend $fileToSend $sendDestination
+          done
           
 
 
@@ -279,10 +349,30 @@ done
 #EOF
 
 
-#AWS
-#assume they'll use aws cli for most management stuff, don't need to reimpliment anything more than basic stuff
-#upload, upload status failed or succeded (report errors), allow multiple uploads, ow/skip/rename, specify remote directory
 
 
-##check if user is root
+
+##check if user being root matters
 #make uninstall flag
+
+
+
+
+#test Azure auth (may need to reimpliment -f filename in fileSend function if azure has less descriptive "file not found" error message than AWS)
+
+#1 check if file exists in cloud (ow/skip/rename) and allow flag to automatically determine this
+
+#2
+#Sanitize bbSelect function input
+
+#3
+#Do Documentation
+#Make installable
+
+
+
+
+
+
+#help temp
+#putcloud -p yourLocalFile -d remoteDestination
