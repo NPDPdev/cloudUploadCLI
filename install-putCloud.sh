@@ -246,7 +246,22 @@ while true; do
 
       -h)
         #help information
-        echo "tempHelp"
+        echo "putcloud [options] <arguments>"
+        echo -e "\t Putcloud allows for uploading of individual or multiple files to AWS/Azure via the command line."
+        
+        echo
+        echo -e "\t -h"
+        echo -e "\t Display this help menu."
+        echo 
+        echo -e "\t -s"
+        echo -e "\t Prompts user to setup the program. Includes selecting which cloud provider to use and which form of authentication."
+        echo 
+        echo -e "\t -b <bucket_blob_location>"
+        echo -e "\t Allows user to define which AWS bucket or Azure blob to use. If used without arguments, user will be prompted."
+        echo 
+        echo -e "\t -p file1 <file2>... -d destination_folder"
+        echo -e "\t Allows user to upload one or multiple files. Must be used with -d to specify the remote directory."
+        echo 
 
         exit 0
         ;;
@@ -347,7 +362,7 @@ done
 
 
 #EOF
-
+#putcloud -s
 
 
 
@@ -369,7 +384,7 @@ done
 #Do Documentation
 #Make installable
 
-
+#4? allow for standalone -d option to choose default remote directory?
 
 
 
