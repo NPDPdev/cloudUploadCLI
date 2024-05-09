@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# if [ -d "$/usr/local/putcloud" ]; then
+# if [ -d "$/usr/local/putcloudcfg" ]; then
 #   echo "putCloud seems to be installed already, exiting."
 #   echo "Run "install-putcloud.sh uninstall" to remove putCloud and its files."
 #   exit 1 #actually make uninstall option
 # fi
 
-# sudo mkdir "/usr/local/putcloud"
-# pushd "/usr/local/putcloud"
+# sudo mkdir "/usr/local/putcloudcfg"
+# pushd "/usr/local/putcloudcfg"
 
 
 # #Create config file.
@@ -16,6 +16,7 @@
 # ConnectionType=none
 # StorageContainer=none
 # EOF
+
 
 
 # popd
@@ -30,7 +31,7 @@
 
 
 
-#Setup Azure Authentication // Need to modify apropriate configs
+#Setup Azure Authentication
 azSetup() { 
     local blobDefault
 
@@ -60,7 +61,7 @@ azSetup() {
     
     
     #Sets ConnectionType to Azure
-    sudo sed -i "s/ConnectionType=.*/ConnectionType=Azure/g" /usr/local/putcloud/putcloud.conf
+    sed -i "s/ConnectionType=.*/ConnectionType=Azure/g" /usr/local/putcloudcfg/putcloud.conf
 
 
 
@@ -106,7 +107,7 @@ awsSetup() {
 
 
 
-    #Login and auth verification
+    #AWS Login and auth verification
     local awsAuthType
     local bucketDefault
 
@@ -136,7 +137,7 @@ awsSetup() {
     fi
     
     #Sets ConnectionType to AWS
-    sudo sed -i "s/ConnectionType=.*/ConnectionType=AWS/g" /usr/local/putcloud/putcloud.conf
+    sed -i "s/ConnectionType=.*/ConnectionType=AWS/g" /usr/local/putcloudcfg/putcloud.conf
 
 
     #Specify default AWS bucket
@@ -159,7 +160,7 @@ bbSelect(){
   local serviceType
   
   #Load Config
-  . /usr/local/putcloud/putcloud.conf
+  . /usr/local/putcloudcfg/putcloud.conf
 
   #Check if we should call it a Bucket or Blob
   case "$ConnectionType" in
@@ -184,10 +185,16 @@ bbSelect(){
     
   fi
 
-  echo 'Updated '$serviceType' from "'$StorageContainer'" to "'$bbNew'".' 
-  tempSed="s/StorageContainer=.*/StorageContainer=$bbNew/g" #part of the "this" in question
+  #Sanitization removing slashes, spaces, other weird things, and lowercases, as per naming rules for AWS/Azure
+  tempSed=${bbNew//_/}
+  tempSed=${tempSed// /_}
+  tempSed=${tempSed//[^a-zA-Z0-9_.-]/}
+  tempSed=`echo -n $tempSed | tr A-Z a-z`
+  sed -i s/StorageContainer=.*/StorageContainer=$tempSed/g /usr/local/putcloudcfg/putcloud.conf #oh this DEFINITELY needs sanitized
 
-  sudo sed -i $tempSed /usr/local/putcloud/putcloud.conf #oh this DEFINITELY needs sanitized
+
+  echo 'Updated '$serviceType' from "'$StorageContainer'" to "'$tempSed'".' 
+
 }
 
 
@@ -195,6 +202,7 @@ bbSelect(){
 #Uploads files to preconfigured blob/bucket
 fileSend(){
   local safeDest=$2
+  local overwriteChoice=$3
   
   #removes leading and trailing "/" characters to ensure correct upload path
   if [[ $safeDest == /* ]]; then
@@ -207,18 +215,67 @@ fileSend(){
 
 
   #Load Config
-  . /usr/local/putcloud/putcloud.conf
+  . /usr/local/putcloudcfg/putcloud.conf
 
 
   case "$ConnectionType" in
     AWS)
-      aws s3 cp $1 s3://$StorageContainer/$safeDest/
+      aws s3api head-object --bucket $StorageContainer --key $safeDest/$1 > /dev/null
+      
+      if ! [[ $? -eq 0 ]]; then
 
-      if [[ $? -eq 0 ]]; then
-        echo "Upload successful."
+        aws s3 cp $1 s3://$StorageContainer/$safeDest/
+
+        if [[ $? -eq 0 ]]; then
+            echo "Upload successful."
+          else
+            echo "Upload failed."
+          fi
+
+
       else
-        echo "Upload failed."
+        
+        while true; do
+          echo "Remote file already exists at /$safeDest/$1"
+
+          if [ -z "$overwriteChoice" ]; then
+            read -p "[O]verwrite or [S]kip? " overwriteChoice
+            echo
+          fi
+
+          case "$overwriteChoice" in
+            S|s)
+              echo "Skipped file at /$safeDest/$1"
+              break
+            ;;
+            O|o)
+              aws s3 cp $1 s3://$StorageContainer/$safeDest/
+
+              if [[ $? -eq 0 ]]; then
+              echo "Upload successful."
+              else
+                echo "Upload failed."
+              fi
+
+              break
+            ;;
+            *)
+              echo "Incorrect input, [S] or [O] needed."
+              ;;
+          esac
+        done
+
       fi
+
+
+
+      # aws s3 cp $1 s3://$StorageContainer/$safeDest/
+
+      # if [[ $? -eq 0 ]]; then
+      #   echo "Upload successful."
+      # else
+      #   echo "Upload failed."
+      # fi
       
     ;;
     Azure)
@@ -255,12 +312,14 @@ while true; do
         echo 
         echo -e "\t -s"
         echo -e "\t Prompts user to setup the program. Includes selecting which cloud provider to use and which form of authentication."
+        echo -e "\t If using setup for the first time to install a provider's CLI, must run command as root."
         echo 
         echo -e "\t -b <bucket_blob_location>"
         echo -e "\t Allows user to define which AWS bucket or Azure blob to use. If used without arguments, user will be prompted."
         echo 
-        echo -e "\t -p file1 <file2>... -d destination_folder"
+        echo -e "\t -p file1 <file2>... -d destination_folder <o|s>"
         echo -e "\t Allows user to upload one or multiple files. Must be used with -d to specify the remote directory."
+        echo -e "\t If O or S is specified, user will not be prompted to overwrite or skip conflicting files."
         echo 
 
         exit 0
@@ -322,9 +381,17 @@ while true; do
             
           done
 
+
+          #Checks for missing or wrong args
           if [ -z "$sendDestination" ]; then
             echo "Missing -d flag for upload destination."
             echo 'Run "putcloud -h" for help.'
+            exit 2
+          fi
+
+          if ! { [[ -z "$3" ]] || [[ "$3" == [oO] ]] || [[ "$3" == [sS] ]]; }; then
+            echo "Incorrect argument '$3' after directory."
+            echo "Please use O, S, or nothing."
             exit 2
           fi
 
@@ -332,7 +399,7 @@ while true; do
 
           #Loops through array, sending each file individually
           for fileToSend in ${multiFileArray[@]}; do
-            fileSend $fileToSend $sendDestination
+            fileSend $fileToSend $sendDestination $3
           done
           
 
@@ -362,6 +429,9 @@ done
 
 
 #EOF
+
+#sudo chown $USER /usr/local/putcloud
+#sudo chown -R $USER /usr/local/putcloudcfg
 #putcloud -s
 
 
@@ -375,16 +445,14 @@ done
 
 #test Azure auth (may need to reimpliment -f filename in fileSend function if azure has less descriptive "file not found" error message than AWS)
 
-#1 check if file exists in cloud (ow/skip/rename) and allow flag to automatically determine this
 
-#2
-#Sanitize bbSelect function input
+#1 Add azure support (auth and upload)
+#2 Make installable - force installer to use sudo and check
 
-#3
-#Do Documentation
-#Make installable
+#3 Do Documentation
 
-#4? allow for standalone -d option to choose default remote directory?
+
+#x? allow for standalone -d option to choose default remote directory?
 
 
 
